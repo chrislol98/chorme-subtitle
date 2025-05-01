@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Subtitle Overlay",
+  "version": "1.0",
+  "description": "Upload and display SRT subtitle files on videos",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://libretranslate.de/*",
+    "https://translate.googleapis.com/*",
+    "https://clients5.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ]
+} 
