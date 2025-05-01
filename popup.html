@@ -27,15 +27,37 @@
       border-radius: 4px;
       cursor: pointer;
       margin-top: 10px;
+      transition: background-color 0.3s;
     }
     
     button:hover {
       background-color: #3367d6;
     }
     
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    
     #status {
       margin-top: 15px;
       color: #555;
+      min-height: 20px;
+      padding: 8px;
+      border-radius: 4px;
+      background-color: #f5f5f5;
+    }
+
+    .status-searching {
+      color: #ff9800 !important;
+    }
+    
+    .status-ready {
+      color: #4caf50 !important;
+    }
+    
+    .status-error {
+      color: #f44336 !important;
     }
 
     .option-row {
@@ -89,11 +111,52 @@
     input:checked + .toggle-slider:before {
       transform: translateX(20px);
     }
+    
+    /* 加载指示器 */
+    .loading-indicator {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0, 0, 0, 0.1);
+      border-radius: 50%;
+      border-top-color: #4285f4;
+      animation: spin 1s linear infinite;
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    .status-container {
+      display: flex;
+      align-items: center;
+    }
+    
+    .video-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+      background-color: #ccc;
+    }
+    
+    .video-found {
+      background-color: #4caf50;
+    }
   </style>
 </head>
 <body>
   <h2>字幕叠加</h2>
   <div>
+    <div class="status-container">
+      <span class="video-indicator" id="video-indicator"></span>
+      <div id="status">正在检测视频元素...</div>
+      <div class="loading-indicator" id="loading-indicator"></div>
+    </div>
+    
     <p>上传 .srt 字幕文件显示在当前视频上：</p>
     <input type="file" id="file-selector" accept=".srt">
     
@@ -106,9 +169,8 @@
     </div>
     
     <div>
-      <button id="apply-button">应用字幕</button>
+      <button id="apply-button" disabled>应用字幕</button>
     </div>
-    <div id="status"></div>
   </div>
   <script src="popup.js"></script>
 </body>

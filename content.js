@@ -21,11 +21,181 @@ let translationCache = {}; // 缓存翻译结果
 let translationQueue = [];
 let isTranslating = false;
 let prioritySubtitle = null;
+let isInIframe = false; // 标记当前脚本是否在iframe中运行
+let iframeVideos = []; // 存储从iframe获取的视频信息
+let mainPageId = null; // 主页面的唯一标识
+let pageId = Math.random().toString(36).substring(2, 15); // 当前页面的唯一标识
+
+// 检测当前脚本是否在iframe中运行
+try {
+  isInIframe = window.self !== window.top;
+} catch (e) {
+  isInIframe = true;
+}
+
+// 初始化跨域通信
+initializeCrossFrameCommunication();
+
+// 初始化跨域通信机制
+function initializeCrossFrameCommunication() {
+  // 如果在iframe中，向主页面报告这个iframe中的视频
+  if (isInIframe) {
+    window.addEventListener('message', function(event) {
+      // 处理来自主页面的消息
+      if (event.data.action === 'requestVideoElements') {
+        mainPageId = event.data.pageId;
+        reportVideoElements(event.data.pageId);
+      } 
+      // 处理获取视频时间的请求
+      else if (event.data.action === 'getVideoTime') {
+        const videos = findVideosInDocument(document);
+        if (videos && videos.length > 0) {
+          const bestVideo = selectBestVideo(videos);
+          if (bestVideo) {
+            // 报告视频时间
+            try {
+              window.parent.postMessage({
+                action: 'videoTimeUpdate',
+                targetId: event.data.pageId,
+                pageId: pageId,
+                currentTime: bestVideo.currentTime,
+                paused: bestVideo.paused
+              }, '*');
+            } catch (e) {
+              console.error('发送视频时间更新失败:', e);
+            }
+          }
+        }
+      }
+    });
+    
+    // 定期检查视频并报告
+    setInterval(reportVideoElements, 2000);
+  } 
+  // 如果是主页面，监听来自iframe的消息
+  else {
+    window.addEventListener('message', function(event) {
+      // 处理iframe报告的视频元素
+      if (event.data.action === 'reportVideoElements' && event.data.targetId === pageId) {
+        // 记录iframe发现的视频
+        if (event.data.hasVideo) {
+          iframeVideos.push({
+            iframeId: event.data.pageId,
+            frameElement: findFrameBySource(event.source),
+            videoInfo: event.data.videoInfo
+          });
+        }
+      }
+      // 处理iframe报告的视频时间更新
+      else if (event.data.action === 'videoTimeUpdate' && event.data.targetId === pageId) {
+        // 查找并更新对应的视频代理
+        for (const iframe of iframeVideos) {
+          if (iframe.iframeId === event.data.pageId && videoElement && videoElement._isIframeVideoProxy && 
+              videoElement._iframeInfo && videoElement._iframeInfo.iframeId === event.data.pageId) {
+            // 更新代理的视频时间
+            videoElement.currentTime = event.data.currentTime;
+            videoElement.paused = event.data.paused;
+            break;
+          }
+        }
+      }
+    });
+    
+    // 广播获取视频元素的请求
+    window.setTimeout(broadcastVideoElementRequest, 500);
+    window.setInterval(broadcastVideoElementRequest, 5000);
+  }
+}
+
+// 在iframe中发现视频时，向主页面报告
+function reportVideoElements(targetId) {
+  // 先检查本iframe中是否有视频元素
+  const videos = findVideosInDocument(document);
+  
+  if (videos && videos.length > 0) {
+    // 取最适合的视频
+    const bestVideo = selectBestVideo(videos);
+    
+    if (bestVideo) {
+      try {
+        // 向父窗口发送消息
+        window.top.postMessage({
+          action: 'reportVideoElements',
+          targetId: targetId || mainPageId,
+          pageId: pageId,
+          hasVideo: true,
+          videoInfo: {
+            width: bestVideo.videoWidth,
+            height: bestVideo.videoHeight,
+            duration: bestVideo.duration,
+            currentTime: bestVideo.currentTime,
+            paused: bestVideo.paused
+          }
+        }, '*');
+      } catch (e) {
+        console.error('向父窗口发送消息失败:', e);
+      }
+    }
+  }
+}
+
+// 找到与source对象关联的iframe元素
+function findFrameBySource(source) {
+  const iframes = document.querySelectorAll('iframe');
+  for (const iframe of iframes) {
+    if (iframe.contentWindow === source) {
+      return iframe;
+    }
+  }
+  return null;
+}
+
+// 广播请求以获取所有iframe中的视频元素
+function broadcastVideoElementRequest() {
+  const iframes = document.querySelectorAll('iframe');
+  iframes.forEach(iframe => {
+    try {
+      iframe.contentWindow.postMessage({
+        action: 'requestVideoElements',
+        pageId: pageId
+      }, '*');
+    } catch (e) {
+      // 忽略跨域错误
+    }
+  });
+}
+
+// 使用iframe API从跨域iframe获取视频元素
+function createScriptToAccessVideo(frameId) {
+  return `
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (videos.length > 0) {
+      const videoInfo = videos.map(v => ({
+        width: v.videoWidth,
+        height: v.videoHeight,
+        duration: v.duration,
+        currentTime: v.currentTime,
+        paused: v.paused
+      }));
+      window.parent.postMessage({
+        action: 'iframeVideoFound',
+        frameId: '${frameId}',
+        videoInfo: videoInfo
+      }, '*');
+    }
+  `;
+}
 
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   if (request.action === 'applySubtitles') {
     try {
+      // 如果在iframe中则不处理字幕应用请求
+      if (isInIframe) {
+        sendResponse({success: false, error: 'Running in iframe'});
+        return true;
+      }
+      
       // Get subtitles from the message
       subtitles = request.subtitles;
       
@@ -39,7 +209,19 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       videoElement = findVideoElement();
       
       if (!videoElement) {
-        sendResponse({success: false, error: 'No video element found on this page.'});
+        // 如果没有立即找到视频元素，设置一个延迟等待
+        // MutationObserver会在视频出现时处理字幕显示
+        console.log('视频元素未找到，正在等待视频加载...');
+        
+        // 设置一个有限的等待时间
+        const videoDetectionTimeout = setTimeout(() => {
+          if (!videoElement) {
+            sendResponse({success: false, error: 'No video element found on this page after waiting.'});
+          }
+        }, 15000); // 15秒等待时间
+        
+        // 返回一个初步的成功响应，表示正在等待视频加载
+        sendResponse({success: true, message: 'Waiting for video to load...'});
         return true;
       }
       
@@ -65,23 +247,162 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     loadAllSubtitles();
     sendResponse({success: true});
     return true;
+  } else if (request.action === 'checkVideoStatus') {
+    // 用于检查当前页面是否有视频元素的新消息类型
+    try {
+      // 如果在iframe中则不响应视频状态检查
+      if (isInIframe) {
+        sendResponse({success: false, error: 'Running in iframe'});
+        return true;
+      }
+      
+      if (!videoElement) {
+        videoElement = findVideoElement();
+      }
+      
+      sendResponse({
+        success: true, 
+        hasVideo: !!videoElement,
+        videoDetails: videoElement ? {
+          duration: videoElement.duration,
+          currentTime: videoElement.currentTime,
+          paused: videoElement.paused
+        } : null
+      });
+    } catch (error) {
+      sendResponse({success: false, error: error.message});
+    }
+    return true;
   }
 });
 
 // Function to find the main video element on the page
 function findVideoElement() {
-  // Try to find the largest video element on the page (most likely the main content)
-  const videos = document.querySelectorAll('video');
+  // 避免在iframe中运行时查找视频元素
+  if (isInIframe) return null;
   
-  if (videos.length === 0) {
-    return null;
+  // 先检查当前文档中的视频元素
+  const mainPageVideos = findVideosInDocument(document);
+  let bestVideo = null;
+  
+  if (mainPageVideos && mainPageVideos.length > 0) {
+    bestVideo = selectBestVideo(mainPageVideos);
+    if (bestVideo) return bestVideo;
   }
   
-  if (videos.length === 1) {
-    return videos[0];
+  // 检查从iframe报告的视频信息
+  if (iframeVideos.length > 0) {
+    // 按视频尺寸排序找到最大的视频
+    iframeVideos.sort((a, b) => {
+      const areaA = a.videoInfo.width * a.videoInfo.height;
+      const areaB = b.videoInfo.width * b.videoInfo.height;
+      return areaB - areaA; // 降序排列
+    });
+    
+    // 找到包含最大视频的iframe
+    const bestIframeInfo = iframeVideos[0];
+    
+    if (bestIframeInfo.frameElement) {
+      // 使用特殊方法处理iframe中的视频
+      console.log('发现iframe中的视频，使用跨域处理方法');
+      
+      // 使用iframe对象来引用视频
+      // 注意：这不是直接访问视频元素本身，而是创建一个代理对象
+      // 这个对象模拟了视频API但实际操作是通过消息传递
+      return createVideoProxy(bestIframeInfo);
+    }
   }
   
-  // If multiple videos, find the largest one that's visible
+  // 如果仍然没找到，尝试查找自定义视频播放器
+  const customPlayers = findCustomVideoPlayers();
+  if (customPlayers.length > 0) {
+    return customPlayers[0];
+  }
+  
+  // 如果还是没找到，尝试使用MutationObserver监听DOM变化等待视频出现
+  setupVideoDetectionObserver();
+  
+  return null;
+}
+
+// 创建一个视频代理对象，用于处理iframe中的视频
+function createVideoProxy(iframeInfo) {
+  // 创建一个模拟视频元素的代理对象
+  const proxy = document.createElement('video');
+  
+  // 添加特殊属性标记这是一个代理
+  proxy._isIframeVideoProxy = true;
+  proxy._iframeInfo = iframeInfo;
+  
+  // 从iframe报告的信息设置初始属性
+  proxy.videoWidth = iframeInfo.videoInfo.width;
+  proxy.videoHeight = iframeInfo.videoInfo.height;
+  proxy.duration = iframeInfo.videoInfo.duration;
+  proxy.currentTime = iframeInfo.videoInfo.currentTime;
+  proxy.paused = iframeInfo.videoInfo.paused;
+  
+  // 设置一个定时器来更新时间信息
+  setInterval(() => {
+    // 模拟视频播放，每100ms更新currentTime
+    if (!proxy.paused && proxy.currentTime < proxy.duration) {
+      proxy.currentTime += 0.1;
+    }
+  }, 100);
+  
+  // 计算并设置代理元素的位置
+  const rect = iframeInfo.frameElement.getBoundingClientRect();
+  proxy.getBoundingClientRect = function() {
+    return rect;
+  };
+  
+  return proxy;
+}
+
+// 在文档中查找所有视频元素
+function findVideosInDocument(doc) {
+  if (!doc) return [];
+  
+  // 查找标准video标签
+  const standardVideos = Array.from(doc.querySelectorAll('video'));
+  
+  // 查找可能被隐藏在shadow DOM中的视频
+  const elementsWithShadow = doc.querySelectorAll('*');
+  const shadowVideos = [];
+  
+  for (const elem of elementsWithShadow) {
+    if (elem.shadowRoot) {
+      const videosInShadow = Array.from(elem.shadowRoot.querySelectorAll('video'));
+      shadowVideos.push(...videosInShadow);
+    }
+  }
+  
+  return [...standardVideos, ...shadowVideos];
+}
+
+// 从找到的视频元素中选择最佳的一个
+function selectBestVideo(videos) {
+  if (videos.length === 0) return null;
+  if (videos.length === 1) return videos[0];
+  
+  // 多个视频元素时的选择策略：
+  // 1. 优先选择正在播放的视频
+  const playingVideos = videos.filter(v => !v.paused && !v.ended && v.currentTime > 0);
+  if (playingVideos.length === 1) return playingVideos[0];
+  
+  // 2. 选择时长最长的视频（通常是主内容）
+  let longestDurationVideo = null;
+  let maxDuration = 0;
+  
+  for (const video of videos) {
+    if (!isNaN(video.duration) && video.duration > maxDuration && isElementVisible(video)) {
+      maxDuration = video.duration;
+      longestDurationVideo = video;
+    }
+  }
+  
+  if (longestDurationVideo) return longestDurationVideo;
+  
+  // 3. 如果无法确定时长，选择面积最大的视频
   let largestVideo = null;
   let largestArea = 0;
   
@@ -98,10 +419,102 @@ function findVideoElement() {
   return largestVideo;
 }
 
+// 尝试查找自定义视频播放器
+function findCustomVideoPlayers() {
+  const customPlayers = [];
+  
+  // YouTube播放器
+  const ytPlayer = document.querySelector('.html5-video-player') || 
+                  document.querySelector('#movie_player');
+  if (ytPlayer) {
+    const ytVideo = ytPlayer.querySelector('video');
+    if (ytVideo) customPlayers.push(ytVideo);
+  }
+  
+  // HTML5 Video.js 播放器
+  const vjsPlayers = document.querySelectorAll('.video-js');
+  for (const player of vjsPlayers) {
+    const vjsVideo = player.querySelector('video');
+    if (vjsVideo) customPlayers.push(vjsVideo);
+  }
+  
+  // JW Player
+  const jwPlayers = document.querySelectorAll('.jwplayer');
+  for (const player of jwPlayers) {
+    const jwVideo = player.querySelector('video');
+    if (jwVideo) customPlayers.push(jwVideo);
+  }
+  
+  // Bilibili播放器
+  const biliPlayers = document.querySelectorAll('.bilibili-player-video');
+  for (const player of biliPlayers) {
+    const biliVideo = player.querySelector('video');
+    if (biliVideo) customPlayers.push(biliVideo);
+  }
+  
+  // HTML5 Plus UI
+  const h5pVideos = document.querySelectorAll('.h5p-video');
+  for (const video of h5pVideos) {
+    if (video.tagName === 'VIDEO') customPlayers.push(video);
+  }
+  
+  return customPlayers;
+}
+
+// 设置MutationObserver来监听DOM变化，等待视频出现
+function setupVideoDetectionObserver() {
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList') {
+        // 检查是否添加了新的视频元素
+        const videos = findVideosInDocument(document);
+        if (videos.length > 0) {
+          const bestVideo = selectBestVideo(videos);
+          if (bestVideo) {
+            videoElement = bestVideo;
+            // 如果已经加载了字幕，立即应用
+            if (subtitles.length > 0 && !checkInterval) {
+              setupSubtitleModal();
+              loadAllSubtitles();
+              startSubtitleTracking();
+            }
+            observer.disconnect();
+          }
+        }
+      }
+    }
+  });
+  
+  // 开始观察DOM变化
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+  
+  // 60秒后停止观察，避免无限期监听
+  setTimeout(() => observer.disconnect(), 60000);
+}
+
 // Function to check if an element is visible
 function isElementVisible(element) {
+  if (!element) return false;
+  
   const style = window.getComputedStyle(element);
-  return style.display !== 'none' && style.visibility !== 'hidden' && element.offsetParent !== null;
+  const rect = element.getBoundingClientRect();
+  
+  // 检查元素是否在视口内
+  const isInViewport = rect.width > 0 && 
+                      rect.height > 0 && 
+                      rect.top < window.innerHeight &&
+                      rect.left < window.innerWidth &&
+                      rect.bottom > 0 &&
+                      rect.right > 0;
+                      
+  // 检查元素是否可见                    
+  return style.display !== 'none' && 
+         style.visibility !== 'hidden' && 
+         parseFloat(style.opacity) > 0 &&
+         isInViewport;
 }
 
 // Function to set up the subtitle modal
@@ -235,8 +648,17 @@ function setupSubtitleModal() {
   // Add to body
   document.body.appendChild(subtitleModal);
   
-  // 优化初始位置和大小
-  const videoRect = videoElement.getBoundingClientRect();
+  // 获取视频位置信息，无论是普通视频还是iframe视频代理
+  let videoRect;
+  
+  if (videoElement._isIframeVideoProxy) {
+    // 对于iframe视频代理，使用iframe的位置
+    videoRect = videoElement._iframeInfo.frameElement.getBoundingClientRect();
+  } else {
+    // 对于普通视频，直接获取位置
+    videoRect = videoElement.getBoundingClientRect();
+  }
+  
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
   
@@ -450,33 +872,58 @@ function startSubtitleTracking() {
   // Check for subtitle updates every 100ms
   checkInterval = setInterval(updateSubtitle, 100);
   
-  // Add event listener for video play/pause
-  videoElement.addEventListener('play', () => {
-    if (checkInterval === null) {
-      checkInterval = setInterval(updateSubtitle, 100);
-    }
-  });
-  
-  videoElement.addEventListener('pause', () => {
-    if (checkInterval !== null) {
-      clearInterval(checkInterval);
-      checkInterval = null;
-    }
-  });
-  
-  videoElement.addEventListener('ended', () => {
-    if (checkInterval !== null) {
-      clearInterval(checkInterval);
-      checkInterval = null;
-    }
-  });
+  // 只有当不是代理视频时才添加事件监听器
+  if (videoElement && !videoElement._isIframeVideoProxy) {
+    // Add event listener for video play/pause
+    videoElement.addEventListener('play', () => {
+      if (checkInterval === null) {
+        checkInterval = setInterval(updateSubtitle, 100);
+      }
+    });
+    
+    videoElement.addEventListener('pause', () => {
+      if (checkInterval !== null) {
+        clearInterval(checkInterval);
+        checkInterval = null;
+      }
+    });
+    
+    videoElement.addEventListener('ended', () => {
+      if (checkInterval !== null) {
+        clearInterval(checkInterval);
+        checkInterval = null;
+      }
+    });
+  }
 }
 
 // Function to update the subtitle based on current video time
 function updateSubtitle() {
   if (!videoElement || !subtitleElement || subtitles.length === 0) return;
   
-  const currentTime = videoElement.currentTime * 1000; // Convert to ms
+  let currentTime;
+  
+  // 检查是否是iframe视频代理
+  if (videoElement._isIframeVideoProxy) {
+    // 使用代理对象的currentTime
+    currentTime = videoElement.currentTime * 1000; // Convert to ms
+    
+    // 尝试通过消息传递更新视频时间
+    if (videoElement._iframeInfo && videoElement._iframeInfo.frameElement) {
+      try {
+        // 向iframe发送消息，请求当前时间
+        videoElement._iframeInfo.frameElement.contentWindow.postMessage({
+          action: 'getVideoTime',
+          pageId: pageId
+        }, '*');
+      } catch (e) {
+        // 忽略跨域错误，使用模拟的时间
+      }
+    }
+  } else {
+    // 直接从视频元素获取时间
+    currentTime = videoElement.currentTime * 1000; // Convert to ms
+  }
   
   // 找到当前时间对应的字幕
   const subtitle = findSubtitleForTime(currentTime);

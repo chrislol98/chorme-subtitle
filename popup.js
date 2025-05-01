@@ -3,6 +3,14 @@ document.addEventListener('DOMContentLoaded', function() {
   const applyButton = document.getElementById('apply-button');
   const statusDiv = document.getElementById('status');
   const translationToggle = document.getElementById('translation-toggle');
+  const videoIndicator = document.getElementById('video-indicator');
+  const loadingIndicator = document.getElementById('loading-indicator');
+  
+  // 检查当前标签页是否有视频
+  checkVideoStatus();
+  
+  // 每3秒检查一次视频状态
+  const videoCheckInterval = setInterval(checkVideoStatus, 3000);
   
   // 从存储中获取翻译设置
   chrome.storage.local.get(['enableTranslation'], function(result) {
@@ -26,15 +34,20 @@ document.addEventListener('DOMContentLoaded', function() {
   
   applyButton.addEventListener('click', function() {
     if (!fileSelector.files.length) {
-      statusDiv.textContent = '请先选择 .srt 文件。';
+      updateStatus('请先选择 .srt 文件。', 'error');
       return;
     }
     
     const file = fileSelector.files[0];
     if (!file.name.endsWith('.srt')) {
-      statusDiv.textContent = '请选择有效的 .srt 文件。';
+      updateStatus('请选择有效的 .srt 文件。', 'error');
       return;
     }
+    
+    // 显示加载状态
+    updateStatus('正在处理字幕文件...', 'loading');
+    applyButton.disabled = true;
+    loadingIndicator.style.display = 'inline-block';
     
     const reader = new FileReader();
     
@@ -43,7 +56,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const subtitles = parseSRT(contents);
       
       if (subtitles.length === 0) {
-        statusDiv.textContent = '无法从文件中解析出字幕。';
+        updateStatus('无法从文件中解析出字幕。', 'error');
+        applyButton.disabled = false;
+        loadingIndicator.style.display = 'none';
         return;
       }
       
@@ -57,21 +72,78 @@ document.addEventListener('DOMContentLoaded', function() {
           subtitles: subtitles,
           enableTranslation: translationToggle.checked
         }, function(response) {
+          loadingIndicator.style.display = 'none';
+          
           if (response && response.success) {
-            statusDiv.textContent = '字幕应用成功！';
+            if (response.message === 'Waiting for video to load...') {
+              updateStatus('正在等待视频加载...', 'searching');
+              // 稍后再检查视频状态
+              setTimeout(checkVideoStatus, 1000);
+            } else {
+              updateStatus('字幕应用成功！', 'ready');
+            }
           } else {
-            statusDiv.textContent = '应用字幕出错：' + (response ? response.error : '页面无响应');
+            updateStatus('应用字幕出错：' + (response ? response.error : '页面无响应'), 'error');
           }
+          applyButton.disabled = false;
         });
       });
     };
     
     reader.onerror = function() {
-      statusDiv.textContent = '读取文件时出错。';
+      updateStatus('读取文件时出错。', 'error');
+      applyButton.disabled = false;
+      loadingIndicator.style.display = 'none';
     };
     
     reader.readAsText(file);
   });
+  
+  // 功能：更新状态显示
+  function updateStatus(message, type) {
+    statusDiv.textContent = message;
+    
+    // 移除所有现有状态类
+    statusDiv.classList.remove('status-searching', 'status-ready', 'status-error');
+    
+    // 添加新的状态类
+    if (type === 'searching') {
+      statusDiv.classList.add('status-searching');
+    } else if (type === 'ready') {
+      statusDiv.classList.add('status-ready');
+    } else if (type === 'error') {
+      statusDiv.classList.add('status-error');
+    } else if (type === 'loading') {
+      statusDiv.classList.add('status-searching');
+    }
+  }
+  
+  // 功能：检查当前标签页是否有视频
+  function checkVideoStatus() {
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      // 避免在没有标签页的情况下发送消息
+      if (!tabs || tabs.length === 0) return;
+      
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'checkVideoStatus'
+      }, function(response) {
+        // 忽略通信错误，这可能是因为content脚本还没有加载
+        if (!response) return;
+        
+        if (response.success) {
+          if (response.hasVideo) {
+            updateStatus('页面中检测到视频，可以应用字幕。', 'ready');
+            videoIndicator.classList.add('video-found');
+            applyButton.disabled = false;
+          } else {
+            updateStatus('正在搜索视频元素...', 'searching');
+            videoIndicator.classList.remove('video-found');
+            applyButton.disabled = true;
+          }
+        }
+      });
+    });
+  }
   
   // SRT parser function
   function parseSRT(srtContent) {
