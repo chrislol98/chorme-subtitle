@@ -174,7 +174,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (isNaN(startTime) || isNaN(endTime)) continue;
       
       // Get subtitle text (all lines after the timestamp line)
-      const text = lines.slice(timelineIndex + 1).join('<br>');
+      const text = lines.slice(timelineIndex + 1).join(' ');
       
       subtitles.push({
         startTime,

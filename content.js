@@ -1281,8 +1281,7 @@ function formatSubtitleText(text) {
              .replace(/"/g, '&quot;')
              .replace(/'/g, '&#039;');
   
-  // 确保换行标签被保留
-  text = text.replace(/\n/g, '<br>');
+  // 不再将换行符转换为<br>标签，因为在解析阶段已经处理了行合并
   
   return text;
 }
