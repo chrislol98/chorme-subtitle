@@ -806,6 +806,19 @@ async function loadAllSubtitles() {
   
   // 显示模态框
   subtitleModal.style.display = 'block';
+  
+  // 如果当前已经有字幕在播放，确保它被高亮和滚动
+  if (videoElement && subtitles.length > 0) {
+    const currentTime = videoElement.currentTime * 1000;
+    currentSubtitle = findSubtitleForTime(currentTime);
+    
+    if (currentSubtitle) {
+      // 短暂延迟，确保DOM更新后再滚动
+      setTimeout(() => {
+        updateSubtitleDisplay();
+      }, 100);
+    }
+  }
 }
 
 // Drag functionality
@@ -984,11 +997,8 @@ function updateSubtitle() {
     // 更新当前字幕
     currentSubtitle = subtitle;
     
-    // 移除所有字幕的高亮标记
-    removeAllHighlights();
-    
-    // 为当前播放的字幕添加高亮标记并滚动到该位置
-    highlightCurrentSubtitle(subtitle);
+    // 更新字幕显示，这将触发高亮和滚动
+    updateSubtitleDisplay();
     
     // 如果启用了翻译，优先翻译当前字幕
     if (enableTranslation && !subtitle.translation) {
@@ -1066,13 +1076,16 @@ function updateSubtitleDisplay() {
   // 如果有当前字幕，添加高亮
   if (currentSubtitle) {
     highlightCurrentSubtitle(currentSubtitle);
-  }
-
-  // 如果自动滚动是开启的，滚动到当前字幕
-  if (autoScroll && currentSubtitle) {
-    const currentEntryElement = document.querySelector(`.subtitle-entry[data-start-time="${currentSubtitle.startTime}"]`);
-    if (currentEntryElement) {
-      scrollToSubtitle(currentEntryElement);
+  
+    // 如果自动滚动是开启的，确保滚动到当前字幕
+    if (autoScroll) {
+      // 使用requestAnimationFrame确保DOM更新后再滚动
+      requestAnimationFrame(() => {
+        const currentEntryElement = document.querySelector(`.subtitle-entry[data-start-time="${currentSubtitle.startTime}"]`);
+        if (currentEntryElement) {
+          scrollToSubtitle(currentEntryElement);
+        }
+      });
     }
   }
 }
@@ -1141,7 +1154,9 @@ async function tryGoogleTranslateAPI(text) {
   const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
   
   try {
-    const encodedText = encodeURIComponent(text);
+    // 预处理文本，移除HTML标签
+    const cleanText = text.replace(/<[^>]*>/g, '');
+    const encodedText = encodeURIComponent(cleanText);
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${encodedText}`;
     
     const response = await fetch(url, { signal: controller.signal });
@@ -1152,11 +1167,24 @@ async function tryGoogleTranslateAPI(text) {
     }
     
     const data = await response.json();
-    if (data && data[0] && data[0][0] && data[0][0][0]) {
-      return data[0][0][0];
-    } else {
-      throw new Error('Unexpected response format from Google Translate');
+    
+    // Google翻译API返回格式为嵌套数组，其中可能包含多个翻译段落
+    // 需要正确提取和组合所有翻译结果
+    if (data && data[0]) {
+      // 收集所有翻译片段
+      let fullTranslation = '';
+      for (const segment of data[0]) {
+        if (segment && segment[0]) {
+          fullTranslation += segment[0];
+        }
+      }
+      
+      if (fullTranslation) {
+        return fullTranslation;
+      }
     }
+    
+    throw new Error('Unexpected response format from Google Translate');
   } catch (error) {
     clearTimeout(timeoutId);
     throw error;
@@ -1170,10 +1198,13 @@ async function tryLibreTranslate(text) {
   const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
   
   try {
+    // 预处理文本，移除HTML标签
+    const cleanText = text.replace(/<[^>]*>/g, '');
+    
     const response = await fetch('https://libretranslate.de/translate', {
       method: 'POST',
       body: JSON.stringify({
-        q: text,
+        q: cleanText,
         source: 'en',
         target: 'zh',
         format: 'text'
@@ -1204,7 +1235,10 @@ async function tryBaiduTranslate(text) {
   const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
   
   try {
-    const encodedText = encodeURIComponent(text);
+    // 预处理文本，移除HTML标签
+    const cleanText = text.replace(/<[^>]*>/g, '');
+    const encodedText = encodeURIComponent(cleanText);
+    
     // 使用无需API密钥的接口（这只是一个示例，实际上可能无法工作）
     const url = `https://fanyi.baidu.com/transapi?from=en&to=zh&query=${encodedText}`;
     
@@ -1274,7 +1308,7 @@ function removeAllHighlights() {
   });
 }
 
-// 为当前播放的字幕添加高亮标记并滚动到视图中
+// 为当前播放的字幕添加高亮标记
 function highlightCurrentSubtitle(subtitle) {
   const allSubtitleEntries = document.querySelectorAll('.subtitle-entry');
   let foundEntry = null;
@@ -1298,13 +1332,11 @@ function highlightCurrentSubtitle(subtitle) {
     }
   });
   
-  // 滚动到高亮的字幕位置（只在允许自动滚动时执行）
-  if (foundEntry && autoScroll) {
-    scrollToSubtitle(foundEntry);
-  }
+  // 返回找到的元素，而不是在这里直接滚动
+  return foundEntry;
 }
 
-// 滚动到特定字幕位置，确保其可见
+// 滚动到特定字幕位置，确保其可见并居中
 function scrollToSubtitle(subtitleElement) {
   if (!subtitleElement) return;
   
@@ -1317,21 +1349,9 @@ function scrollToSubtitle(subtitleElement) {
   const containerRect = scrollContainer.getBoundingClientRect();
   const subtitleRect = subtitleElement.getBoundingClientRect();
   
-  // 计算元素相对于滚动容器的位置
-  const relativeTop = subtitleRect.top - containerRect.top;
-  const relativeBottom = subtitleRect.bottom - containerRect.top;
-  
-  // 判断元素是否在可视区域内
-  const isInView = (
-    relativeTop >= 0 &&
-    relativeBottom <= containerRect.height
-  );
-  
-  // 如果不在视图内，滚动到该元素的中间位置
-  if (!isInView) {
-    const scrollTop = subtitleElement.offsetTop - (containerRect.height / 2) + (subtitleRect.height / 2);
-    scrollContainer.scrollTop = Math.max(0, scrollTop);
-  }
+  // 始终将字幕元素滚动到容器中央位置，无论它是否在可视区域内
+  const scrollTop = subtitleElement.offsetTop - (containerRect.height / 2) + (subtitleRect.height / 2);
+  scrollContainer.scrollTop = Math.max(0, scrollTop);
 }
 
 // 格式化字幕文本（增加格式化处理逻辑）
@@ -1466,11 +1486,20 @@ async function processTranslationQueue() {
         displayedSubtitles[subtitleIndex].translation = '正在翻译...';
         updateSubtitleDisplay();
         
-        // 进行翻译
-        const translation = await translateText(subtitleToTranslate.text);
+        // 预处理字幕文本，移除HTML标签
+        const cleanText = subtitleToTranslate.text.replace(/<[^>]*>/g, '');
         
-        // 更新翻译结果
-        displayedSubtitles[subtitleIndex].translation = translation;
+        // 进行翻译
+        const translation = await translateText(cleanText);
+        
+        // 确保没有返回空翻译
+        if (!translation || translation === '[翻译失败]') {
+          displayedSubtitles[subtitleIndex].translation = '[翻译失败]';
+        } else {
+          // 更新翻译结果
+          displayedSubtitles[subtitleIndex].translation = translation;
+        }
+        
         updateSubtitleDisplay();
       }
     } catch (error) {
