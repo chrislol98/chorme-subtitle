@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const applyButton = document.getElementById('apply-button');
   const statusDiv = document.getElementById('status');
   const translationToggle = document.getElementById('translation-toggle');
+  const subtitleStyleToggle = document.getElementById('subtitle-style-toggle');
   const videoIndicator = document.getElementById('video-indicator');
   const loadingIndicator = document.getElementById('loading-indicator');
   
@@ -13,9 +14,12 @@ document.addEventListener('DOMContentLoaded', function() {
   const videoCheckInterval = setInterval(checkVideoStatus, 3000);
   
   // 从存储中获取翻译设置
-  chrome.storage.local.get(['enableTranslation'], function(result) {
+  chrome.storage.local.get(['enableTranslation', 'formatSubtitleStyle'], function(result) {
     if (result.hasOwnProperty('enableTranslation')) {
       translationToggle.checked = result.enableTranslation;
+    }
+    if (result.hasOwnProperty('formatSubtitleStyle')) {
+      subtitleStyleToggle.checked = result.formatSubtitleStyle;
     }
   });
   
@@ -28,6 +32,19 @@ document.addEventListener('DOMContentLoaded', function() {
       chrome.tabs.sendMessage(tabs[0].id, {
         action: 'toggleTranslation',
         enable: translationToggle.checked
+      });
+    });
+  });
+  
+  // 当字幕样式开关状态改变时保存设置
+  subtitleStyleToggle.addEventListener('change', function() {
+    chrome.storage.local.set({ formatSubtitleStyle: this.checked });
+    
+    // 如果已经应用了字幕，则向当前页面发送更新字幕样式的消息
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'toggleSubtitleStyle',
+        formatStyle: this.checked
       });
     });
   });
@@ -62,15 +79,19 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
       
-      // 保存翻译设置
-      chrome.storage.local.set({ enableTranslation: translationToggle.checked });
+      // 保存翻译设置和字幕样式设置
+      chrome.storage.local.set({ 
+        enableTranslation: translationToggle.checked,
+        formatSubtitleStyle: subtitleStyleToggle.checked
+      });
       
       // 发送解析后的字幕到content script
       chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         chrome.tabs.sendMessage(tabs[0].id, {
           action: 'applySubtitles',
           subtitles: subtitles,
-          enableTranslation: translationToggle.checked
+          enableTranslation: translationToggle.checked,
+          formatSubtitleStyle: subtitleStyleToggle.checked
         }, function(response) {
           loadingIndicator.style.display = 'none';
           

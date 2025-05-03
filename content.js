@@ -17,6 +17,7 @@ let initialHeight = 0;
 let resizeDirection = ''; // 记录当前调整大小的方向
 let autoScroll = true;  // Flag to control auto-scrolling
 let enableTranslation = true; // 是否启用翻译
+let formatSubtitleStyle = true; // 是否格式化字幕样式（自然大小写）
 let translationCache = {}; // 缓存翻译结果
 let translationQueue = [];
 let isTranslating = false;
@@ -205,6 +206,16 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       // Clear translation cache
       translationCache = {};
       
+      // 设置字幕格式化选项
+      if (request.hasOwnProperty('formatSubtitleStyle')) {
+        formatSubtitleStyle = request.formatSubtitleStyle;
+      }
+      
+      // 设置翻译选项
+      if (request.hasOwnProperty('enableTranslation')) {
+        enableTranslation = request.enableTranslation;
+      }
+      
       // Find video element on the page
       videoElement = findVideoElement();
       
@@ -242,6 +253,14 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
   } else if (request.action === 'toggleTranslation') {
     // 切换翻译状态
     enableTranslation = request.enable;
+    // 清空现有字幕并重新加载，应用新设置
+    displayedSubtitles = [];
+    loadAllSubtitles();
+    sendResponse({success: true});
+    return true;
+  } else if (request.action === 'toggleSubtitleStyle') {
+    // 切换字幕样式
+    formatSubtitleStyle = request.formatStyle;
     // 清空现有字幕并重新加载，应用新设置
     displayedSubtitles = [];
     loadAllSubtitles();
@@ -536,7 +555,10 @@ function setupSubtitleModal() {
       font-weight: bold;
     }
     .current-subtitle {
-      /* 保留类名但移除视觉效果 */
+      border-left: 3px solid #ffcc00;
+      padding-left: 7px;
+      background-color: rgba(255, 204, 0, 0.1);
+      transition: all 0.3s ease;
     }
     /* 添加resize handles样式 */
     .resize-handle {
@@ -618,8 +640,27 @@ function setupSubtitleModal() {
     <span>启用翻译</span>
   `;
   
+  // 添加字幕样式格式化开关
+  const styleToggle = document.createElement('div');
+  styleToggle.id = 'style-toggle';
+  styleToggle.style.marginLeft = '10px';
+  styleToggle.innerHTML = `
+    <label class="toggle-switch">
+      <input type="checkbox" ${formatSubtitleStyle ? 'checked' : ''} id="style-checkbox">
+      <span class="toggle-slider"></span>
+    </label>
+    <span>格式化</span>
+  `;
+  
+  // 创建控件容器
+  const controlsContainer = document.createElement('div');
+  controlsContainer.style.display = 'flex';
+  controlsContainer.style.alignItems = 'center';
+  controlsContainer.appendChild(translationToggle);
+  controlsContainer.appendChild(styleToggle);
+  
   modalHeader.innerHTML = '<span>字幕 (拖动移动)</span>';
-  modalHeader.appendChild(translationToggle);
+  modalHeader.appendChild(controlsContainer);
   subtitleModal.appendChild(modalHeader);
   
   // Create subtitle content container with scrolling
@@ -734,6 +775,16 @@ function setupSubtitleModal() {
       enableTranslation = this.checked;
       // 重新加载所有字幕，应用新设置
       loadAllSubtitles();
+    });
+  }
+  
+  // 字幕样式开关事件监听
+  const styleCheckbox = document.getElementById('style-checkbox');
+  if (styleCheckbox) {
+    styleCheckbox.addEventListener('change', function() {
+      formatSubtitleStyle = this.checked;
+      // 更新字幕显示
+      updateSubtitleDisplay();
     });
   }
 }
@@ -981,34 +1032,48 @@ function findSubtitleForTime(currentTime) {
 
 // Function to update the subtitle display with all history
 function updateSubtitleDisplay() {
-  // 创建所有已显示字幕的HTML
-  const subtitleHTML = displayedSubtitles.map(subtitle => {
-    // 确保翻译结果被正确处理
-    const translation = subtitle.translation || '';
-    const showTranslation = enableTranslation && translation;
-    
-    // 处理可能过长的字幕文本，确保显示完整
-    const formattedText = formatSubtitleText(subtitle.text);
-    const formattedTranslation = showTranslation ? formatSubtitleText(translation) : '';
-    
-    if (showTranslation) {
-      return `<div class="subtitle-entry" data-start="${subtitle.startTime}" data-end="${subtitle.endTime}">
-        <div class="subtitle-original">${formattedText}</div>
-        <div class="subtitle-translation">${formattedTranslation}</div>
-      </div>`;
-    } else {
-      return `<div class="subtitle-entry" data-start="${subtitle.startTime}" data-end="${subtitle.endTime}">
-        <div class="subtitle-original">${formattedText}</div>
-      </div>`;
+  // 确保字幕内容元素存在
+  const contentElement = document.getElementById('srt-subtitle-content');
+  if (!contentElement) return;
+
+  // 清空之前的字幕显示
+  contentElement.innerHTML = '';
+
+  // 创建并显示字幕历史
+  displayedSubtitles.forEach(subtitle => {
+    const entryElement = document.createElement('div');
+    entryElement.classList.add('subtitle-entry');
+    entryElement.dataset.startTime = subtitle.startTime;
+    entryElement.dataset.endTime = subtitle.endTime;
+
+    // 原始字幕文本
+    const originalElement = document.createElement('div');
+    originalElement.classList.add('subtitle-original');
+    originalElement.textContent = formatSubtitleText(subtitle.text);
+    entryElement.appendChild(originalElement);
+
+    // 如果有翻译，显示翻译文本
+    if (subtitle.translation && enableTranslation) {
+      const translationElement = document.createElement('div');
+      translationElement.classList.add('subtitle-translation');
+      translationElement.textContent = subtitle.translation;
+      entryElement.appendChild(translationElement);
     }
-  }).join('');
-  
-  // 更新内容
-  subtitleElement.innerHTML = subtitleHTML;
-  
-  // 如果有当前字幕，确保它被高亮
+
+    contentElement.appendChild(entryElement);
+  });
+
+  // 如果有当前字幕，添加高亮
   if (currentSubtitle) {
     highlightCurrentSubtitle(currentSubtitle);
+  }
+
+  // 如果自动滚动是开启的，滚动到当前字幕
+  if (autoScroll && currentSubtitle) {
+    const currentEntryElement = document.querySelector(`.subtitle-entry[data-start-time="${currentSubtitle.startTime}"]`);
+    if (currentEntryElement) {
+      scrollToSubtitle(currentEntryElement);
+    }
   }
 }
 
@@ -1216,14 +1281,14 @@ function highlightCurrentSubtitle(subtitle) {
   
   allSubtitleEntries.forEach(entry => {
     // 使用data属性匹配字幕
-    const startTime = parseFloat(entry.dataset.start);
-    const endTime = parseFloat(entry.dataset.end);
+    const startTime = parseFloat(entry.dataset.startTime);
+    const endTime = parseFloat(entry.dataset.endTime);
     
     if (startTime === subtitle.startTime && endTime === subtitle.endTime) {
-      // 高亮条目本身（用于跟踪，但不会有视觉效果）
+      // 高亮条目本身
       entry.classList.add('current-subtitle');
       
-      // 只高亮文本内容
+      // 高亮文本内容
       const originalText = entry.querySelector('.subtitle-original');
       const translationText = entry.querySelector('.subtitle-translation');
       if (originalText) originalText.classList.add('highlight-text');
@@ -1241,6 +1306,8 @@ function highlightCurrentSubtitle(subtitle) {
 
 // 滚动到特定字幕位置，确保其可见
 function scrollToSubtitle(subtitleElement) {
+  if (!subtitleElement) return;
+  
   const scrollContainer = document.getElementById('srt-subtitle-scroll-container');
   if (!scrollContainer) return;
   
@@ -1260,30 +1327,95 @@ function scrollToSubtitle(subtitleElement) {
     relativeBottom <= containerRect.height
   );
   
-  // 只有在允许自动滚动时才执行滚动
-  const scrollTop = subtitleElement.offsetTop - (containerRect.height / 2) + (subtitleRect.height / 2);
-  scrollContainer.scrollTop = Math.max(0, scrollTop);
-  
-  // 注意：不再在这里重置autoScroll状态，让鼠标事件控制
+  // 如果不在视图内，滚动到该元素的中间位置
+  if (!isInView) {
+    const scrollTop = subtitleElement.offsetTop - (containerRect.height / 2) + (subtitleRect.height / 2);
+    scrollContainer.scrollTop = Math.max(0, scrollTop);
+  }
 }
 
-// 新增函数：格式化字幕文本，处理过长文本
+// 格式化字幕文本（增加格式化处理逻辑）
 function formatSubtitleText(text) {
+  if (!formatSubtitleStyle) {
+    // 如果不需要格式化，直接返回原始文本
+    return text;
+  }
+
   if (!text) return '';
+
+  // 首先移除HTML标签，如<i></i>, <b></b>等
+  let formattedText = text.replace(/<[^>]*>/g, '');
   
-  // 移除HTML标签，防止XSS
-  text = text.replace(/<[^>]*>/g, '');
+  // 处理特殊HTML实体
+  formattedText = formattedText
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
   
-  // 处理特殊字符，确保安全显示
-  text = text.replace(/&/g, '&amp;')
-             .replace(/</g, '&lt;')
-             .replace(/>/g, '&gt;')
-             .replace(/"/g, '&quot;')
-             .replace(/'/g, '&#039;');
+  // 格式化字幕的逻辑：
+  // 1. 移除多余空格
+  // 2. 将全部大写的文本转换为首字母大写的格式
+  formattedText = formattedText.trim();
   
-  // 不再将换行符转换为<br>标签，因为在解析阶段已经处理了行合并
+  // 更可靠的全大写检测 - 包含至少2个字符
+  const hasLowerCase = /[a-z]/.test(formattedText);
+  const hasUpperCase = /[A-Z]/.test(formattedText);
+  const hasLetters = hasLowerCase || hasUpperCase;
+  const isLongEnough = formattedText.replace(/[^a-zA-Z]/g, '').length >= 2;
   
-  return text;
+  // 如果文本包含字母且没有小写字母（即全大写），且长度足够，则格式化
+  if (hasLetters && !hasLowerCase && hasUpperCase && isLongEnough) {
+    // 全部小写后再格式化
+    formattedText = formattedText.toLowerCase();
+    
+    // 句子首字母大写 - 增强版本
+    formattedText = formattedText
+      // 句子开头首字母大写
+      .replace(/(^\s*\w)/g, c => c.toUpperCase())
+      // 句号、感叹号、问号后的首字母大写
+      .replace(/([.!?]\s*\w)/g, c => c.toUpperCase())
+      // 常见专有名词首字母大写
+      .replace(/\bi\b/g, 'I')
+      .replace(/\bdr\.\s+\w/gi, match => match.toUpperCase())
+      .replace(/\bmr\.\s+\w/gi, match => match.toUpperCase())
+      .replace(/\bmrs\.\s+\w/gi, match => match.toUpperCase())
+      .replace(/\bms\.\s+\w/gi, match => match.toUpperCase());
+    
+    // 处理常见缩写和专有名词
+    const commonAbbreviations = {
+      'u.s.': 'U.S.',
+      'u.k.': 'U.K.',
+      'i.e.': 'i.e.',
+      'e.g.': 'e.g.',
+      'etc.': 'etc.',
+      'nasa': 'NASA',
+      'fbi': 'FBI',
+      'cia': 'CIA',
+      'bbc': 'BBC',
+      'cnn': 'CNN'
+    };
+    
+    // 应用常见缩写和专有名词的大写规则
+    for (const [abbr, proper] of Object.entries(commonAbbreviations)) {
+      formattedText = formattedText.replace(
+        new RegExp('\\b' + abbr + '\\b', 'gi'), 
+        proper
+      );
+    }
+  }
+  
+  // 移除字幕中的一些常见无意义标记
+  formattedText = formattedText
+    .replace(/\s*--\s*/g, ' ')
+    .replace(/\s*-\s*/g, ' ')
+    .replace(/\(\s*\)/g, '')     // 移除空括号
+    .replace(/\[\s*\]/g, '')     // 移除空方括号
+    .replace(/\s{2,}/g, ' ');    // 将多个空格替换为单个空格
+  
+  return formattedText;
 }
 
 // 查找当前字幕之后的n个字幕
