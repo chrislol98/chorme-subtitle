@@ -26,6 +26,7 @@ let isInIframe = false; // 标记当前脚本是否在iframe中运行
 let iframeVideos = []; // 存储从iframe获取的视频信息
 let mainPageId = null; // 主页面的唯一标识
 let pageId = Math.random().toString(36).substring(2, 15); // 当前页面的唯一标识
+let subtitleOpacity = 0.9; // 默认透明度90%（即10%透明）
 
 // 检测当前脚本是否在iframe中运行
 try {
@@ -214,6 +215,11 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
       // 设置翻译选项
       if (request.hasOwnProperty('enableTranslation')) {
         enableTranslation = request.enableTranslation;
+      }
+      
+      // 设置透明度选项
+      if (request.hasOwnProperty('subtitleOpacity')) {
+        subtitleOpacity = request.subtitleOpacity;
       }
       
       // Find video element on the page
@@ -547,103 +553,131 @@ function setupSubtitleModal() {
   subtitleModal = document.createElement('div');
   subtitleModal.id = 'srt-subtitle-modal';
   
-  // 添加文本高亮样式
+  // 添加精简的文本高亮样式
   const style = document.createElement('style');
   style.textContent = `
     .highlight-text {
       color: #ffcc00 !important;
       font-weight: bold;
     }
-    .current-subtitle {
-      border-left: 3px solid #ffcc00;
-      padding-left: 7px;
-      background-color: rgba(255, 204, 0, 0.1);
-      transition: all 0.3s ease;
-    }
-    /* 添加resize handles样式 */
-    .resize-handle {
+    
+    /* 更改拖动区域，使其不再覆盖控件 */
+    #srt-modal-drag-handle {
       position: absolute;
-      background: transparent;
-      z-index: 1000;
-    }
-    .resize-n {
-      top: -3px;
-      left: 0;
-      width: 100%;
-      height: 6px;
-      cursor: ns-resize;
-    }
-    .resize-e {
       top: 0;
-      right: -3px;
-      width: 6px;
-      height: 100%;
-      cursor: ew-resize;
+      right: 0;
+      width: 24px;
+      height: 24px;
+      cursor: move;
+      background-color: transparent;
+      z-index: 10;
+      opacity: 0.8;
     }
-    .resize-s {
-      bottom: -3px;
-      left: 0;
-      width: 100%;
-      height: 6px;
-      cursor: ns-resize;
+    
+    /* 顶部标题栏样式 */
+    .subtitle-title-bar {
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #aaa;
+      text-align: center;
+      cursor: move;
+      user-select: none;
+      background-color: rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
-    .resize-w {
+    
+    /* 空间紧凑型控件 */
+    .control-container {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: white;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      padding: 4px 8px;
+      border-radius: 4px;
+      z-index: 11; /* 确保控件在拖动把手上方 */
+    }
+    
+    /* 设置滑块容器样式 */
+    .opacity-slider-container {
+      display: flex;
+      align-items: center;
+      margin-left: 10px;
+    }
+    
+    /* 让滑块和文字标签更加靠近 */
+    .opacity-value {
+      margin-left: 4px;
+      font-size: 11px;
+    }
+    
+    /* 更小的开关 */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 26px;
+      height: 14px;
+      z-index: 12; /* 确保开关在最上层 */
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
       top: 0;
-      left: -3px;
-      width: 6px;
-      height: 100%;
-      cursor: ew-resize;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #555;
+      transition: .3s;
+      border-radius: 14px;
     }
-    .resize-ne {
-      top: -3px;
-      right: -3px;
-      width: 12px;
-      height: 12px;
-      cursor: nesw-resize;
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 10px;
+      width: 10px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
     }
-    .resize-se {
-      bottom: -3px;
-      right: -3px;
-      width: 12px;
-      height: 12px;
-      cursor: nwse-resize;
+    
+    input:checked + .toggle-slider {
+      background-color: #2196F3;
     }
-    .resize-sw {
-      bottom: -3px;
-      left: -3px;
-      width: 12px;
-      height: 12px;
-      cursor: nesw-resize;
-    }
-    .resize-nw {
-      top: -3px;
-      left: -3px;
-      width: 12px;
-      height: 12px;
-      cursor: nwse-resize;
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(12px);
     }
   `;
   document.head.appendChild(style);
   
-  // Create header for dragging
-  const modalHeader = document.createElement('div');
-  modalHeader.id = 'srt-modal-header';
+  // 创建精简的顶部控制栏
+  const controlsContainer = document.createElement('div');
+  controlsContainer.className = 'control-container';
   
-  // 添加翻译开关
+  // 翻译开关
   const translationToggle = document.createElement('div');
-  translationToggle.id = 'translation-toggle';
+  translationToggle.style.display = 'flex';
+  translationToggle.style.alignItems = 'center';
+  translationToggle.style.gap = '4px';
   translationToggle.innerHTML = `
     <label class="toggle-switch">
       <input type="checkbox" ${enableTranslation ? 'checked' : ''} id="translation-checkbox">
       <span class="toggle-slider"></span>
     </label>
-    <span>启用翻译</span>
+    <span>翻译</span>
   `;
   
-  // 添加字幕样式格式化开关
+  // 字幕样式开关
   const styleToggle = document.createElement('div');
-  styleToggle.id = 'style-toggle';
-  styleToggle.style.marginLeft = '10px';
+  styleToggle.style.display = 'flex';
+  styleToggle.style.alignItems = 'center';
+  styleToggle.style.gap = '4px';
+  styleToggle.style.marginLeft = '8px';
   styleToggle.innerHTML = `
     <label class="toggle-switch">
       <input type="checkbox" ${formatSubtitleStyle ? 'checked' : ''} id="style-checkbox">
@@ -652,44 +686,63 @@ function setupSubtitleModal() {
     <span>格式化</span>
   `;
   
-  // 创建控件容器
-  const controlsContainer = document.createElement('div');
-  controlsContainer.style.display = 'flex';
-  controlsContainer.style.alignItems = 'center';
+  // 透明度调节滑块
+  const opacitySlider = document.createElement('div');
+  opacitySlider.className = 'opacity-slider-container';
+  opacitySlider.innerHTML = `
+    <input type="range" min="10" max="100" value="${subtitleOpacity * 100}" class="opacity-slider" id="opacity-slider">
+    <span class="opacity-value" id="opacity-value">${Math.round(subtitleOpacity * 100)}%</span>
+  `;
+  
+  // 关闭按钮
+  const closeButton = document.createElement('div');
+  closeButton.style.marginLeft = 'auto';
+  closeButton.style.cursor = 'pointer';
+  closeButton.style.fontSize = '14px';
+  closeButton.style.fontWeight = 'bold';
+  closeButton.style.padding = '0 4px';
+  closeButton.textContent = '×';
+  closeButton.title = '关闭字幕';
+  closeButton.addEventListener('click', () => {
+    subtitleModal.style.display = 'none';
+  });
+  
+  // 添加拖动把手（仅在右上角显示）
+  const dragHandle = document.createElement('div');
+  dragHandle.id = 'srt-modal-drag-handle';
+  dragHandle.title = '拖动移动';
+  dragHandle.innerHTML = `<span style="font-size: 12px; color: #aaa;">⋮⋮</span>`;
+  
+  // 添加控件到容器
   controlsContainer.appendChild(translationToggle);
   controlsContainer.appendChild(styleToggle);
+  controlsContainer.appendChild(opacitySlider);
+  controlsContainer.appendChild(closeButton);
   
-  modalHeader.innerHTML = '<span>字幕 (拖动移动)</span>';
-  modalHeader.appendChild(controlsContainer);
-  subtitleModal.appendChild(modalHeader);
+  // 添加控件容器到模态框
+  subtitleModal.appendChild(controlsContainer);
+  subtitleModal.appendChild(dragHandle);
   
-  // Create subtitle content container with scrolling
+  // 创建字幕内容容器并启用滚动
   const subtitleScrollContainer = document.createElement('div');
   subtitleScrollContainer.id = 'srt-subtitle-scroll-container';
   subtitleModal.appendChild(subtitleScrollContainer);
   
-  // Create subtitle content element
+  // 创建字幕内容元素
   subtitleElement = document.createElement('div');
   subtitleElement.id = 'srt-subtitle-content';
   subtitleScrollContainer.appendChild(subtitleElement);
   
-  // 创建8个方向的调整大小手柄
-  const directions = ['n', 'e', 's', 'w', 'ne', 'se', 'sw', 'nw'];
+  // 添加顶部标题栏（用于拖动）
+  const titleBar = document.createElement('div');
+  titleBar.className = 'subtitle-title-bar';
+  titleBar.textContent = '字幕 - 拖动此处移动';
+  titleBar.addEventListener('mousedown', startDrag);
   
-  directions.forEach(dir => {
-    const handle = document.createElement('div');
-    handle.className = `resize-handle resize-${dir}`;
-    handle.dataset.direction = dir;
-    subtitleModal.appendChild(handle);
-    
-    // Add event listener for each handle
-    handle.addEventListener('mousedown', startResize);
-  });
+  // 在最顶部添加标题栏
+  subtitleModal.insertBefore(titleBar, subtitleModal.firstChild);
   
-  // Add to body
-  document.body.appendChild(subtitleModal);
-  
-  // 获取视频位置信息，无论是普通视频还是iframe视频代理
+  // 确定视频位置以便放置字幕窗口
   let videoRect;
   
   if (videoElement._isIframeVideoProxy) {
@@ -700,28 +753,31 @@ function setupSubtitleModal() {
     videoRect = videoElement.getBoundingClientRect();
   }
   
+  // 获取视口尺寸
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
   
-  // 计算合适的宽度和位置
-  const optimalWidth = Math.min(videoRect.width, 500); // 限制最大宽度500px
-  const optimalLeft = Math.max(10, videoRect.left + (videoRect.width - optimalWidth) / 2); // 水平居中对齐视频
+  // 计算字幕宽度（适配视频但不超出范围）
+  const optimalWidth = Math.min(Math.max(videoRect.width * 0.7, 300), 600);
   
-  // 设置模态框位置和大小
-  subtitleModal.style.left = `${optimalLeft}px`;
-  subtitleModal.style.top = `${videoRect.bottom + 10}px`; // 仍然在视频下方10px
+  // 水平居中字幕窗口在视频下方
+  const optimalLeft = videoRect.left + (videoRect.width - optimalWidth) / 2;
+  
+  // 让字幕窗口位于视频中间偏下位置
+  const optimalTop = videoRect.top + videoRect.height * 0.7;
+  
+  // 应用位置和大小
+  subtitleModal.style.left = `${Math.max(10, optimalLeft)}px`;
+  subtitleModal.style.top = `${Math.min(viewportHeight - 300, optimalTop)}px`;
   subtitleModal.style.width = `${optimalWidth}px`;
-  subtitleModal.style.height = '300px';
-  subtitleModal.style.display = 'block';
+  subtitleModal.style.height = '250px';
+  subtitleModal.style.display = 'block'; // 确保可见
+  subtitleModal.style.opacity = subtitleOpacity; // 设置初始透明度
   
-  // Add event listeners for dragging
-  modalHeader.addEventListener('mousedown', startDrag);
+  // 设置拖动事件监听器
+  dragHandle.addEventListener('mousedown', startDrag);
   document.addEventListener('mousemove', drag);
   document.addEventListener('mouseup', stopDrag);
-  
-  // Add event listeners for resizing
-  document.addEventListener('mousemove', resize);
-  document.addEventListener('mouseup', stopResize);
   
   // 默认启用自动滚动
   autoScroll = true;
@@ -732,7 +788,6 @@ function setupSubtitleModal() {
     // 5秒后恢复自动滚动
     clearTimeout(scrollTimeout);
     scrollTimeout = setTimeout(() => {
-      // 只有当鼠标不在容器上时才恢复自动滚动
       if (!isHovering) {
         autoScroll = true;
         if (currentSubtitle) {
@@ -768,10 +823,14 @@ function setupSubtitleModal() {
     }
   });
   
+  // 添加到文档
+  document.body.appendChild(subtitleModal);
+  
+  // 移动事件监听器设置到DOM添加之后，确保元素已经可以被查找到
   // 翻译开关事件监听
-  const checkbox = document.getElementById('translation-checkbox');
-  if (checkbox) {
-    checkbox.addEventListener('change', function() {
+  const translationCheckbox = document.getElementById('translation-checkbox');
+  if (translationCheckbox) {
+    translationCheckbox.addEventListener('change', function() {
       enableTranslation = this.checked;
       // 重新加载所有字幕，应用新设置
       loadAllSubtitles();
@@ -787,6 +846,44 @@ function setupSubtitleModal() {
       updateSubtitleDisplay();
     });
   }
+  
+  // 透明度滑块事件监听
+  const opacitySliderEl = document.getElementById('opacity-slider');
+  const opacityValueEl = document.getElementById('opacity-value');
+  if (opacitySliderEl) {
+    opacitySliderEl.addEventListener('input', function() {
+      // 更新透明度值
+      subtitleOpacity = this.value / 100;
+      // 更新显示的百分比
+      if (opacityValueEl) {
+        opacityValueEl.textContent = `${this.value}%`;
+      }
+      // 应用透明度到模态框
+      subtitleModal.style.opacity = subtitleOpacity;
+      
+      // 保存透明度设置
+      chrome.storage.local.set({ subtitleOpacity: subtitleOpacity });
+    });
+  }
+  
+  // 从存储中获取之前的透明度设置
+  chrome.storage.local.get(['subtitleOpacity'], function(result) {
+    if (result.hasOwnProperty('subtitleOpacity')) {
+      subtitleOpacity = result.subtitleOpacity;
+      // 应用透明度到模态框
+      if (subtitleModal) {
+        subtitleModal.style.opacity = subtitleOpacity;
+      }
+      // 更新滑块值
+      if (opacitySliderEl) {
+        opacitySliderEl.value = subtitleOpacity * 100;
+      }
+      // 更新显示的百分比
+      if (opacityValueEl) {
+        opacityValueEl.textContent = `${Math.round(subtitleOpacity * 100)}%`;
+      }
+    }
+  });
 }
 
 // 新增函数：预加载并显示所有字幕
@@ -804,8 +901,9 @@ async function loadAllSubtitles() {
   
   // 不再在这里翻译所有字幕，而是等待播放触发翻译
   
-  // 显示模态框
+  // 显示模态框并应用透明度
   subtitleModal.style.display = 'block';
+  subtitleModal.style.opacity = subtitleOpacity;
   
   // 如果当前已经有字幕在播放，确保它被高亮和滚动
   if (videoElement && subtitles.length > 0) {
@@ -823,10 +921,8 @@ async function loadAllSubtitles() {
 
 // Drag functionality
 function startDrag(e) {
-  // 不要在点击翻译开关时启动拖动
-  if (e.target.id === 'translation-checkbox' || 
-      e.target.classList.contains('toggle-slider') ||
-      e.target.closest('#translation-toggle')) {
+  // 只有当点击拖动把手时才启动拖动
+  if (!e.target.closest('#srt-modal-drag-handle')) {
     return;
   }
   
@@ -836,6 +932,9 @@ function startDrag(e) {
     initialY = subtitleModal.offsetTop;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
+    
+    // 增加光标视觉反馈
+    document.body.style.cursor = 'move';
     
     // Prevent text selection during drag
     e.preventDefault();
@@ -847,83 +946,24 @@ function drag(e) {
     const dx = e.clientX - dragStartX;
     const dy = e.clientY - dragStartY;
     
-    subtitleModal.style.left = `${initialX + dx}px`;
-    subtitleModal.style.top = `${initialY + dy}px`;
+    // 计算新位置
+    const newLeft = initialX + dx;
+    const newTop = initialY + dy;
+    
+    // 确保不会拖出可视窗口边界
+    const maxLeft = window.innerWidth - subtitleModal.offsetWidth;
+    const maxTop = window.innerHeight - subtitleModal.offsetHeight;
+    
+    subtitleModal.style.left = `${Math.max(0, Math.min(maxLeft, newLeft))}px`;
+    subtitleModal.style.top = `${Math.max(0, Math.min(maxTop, newTop))}px`;
   }
 }
 
 function stopDrag() {
+  if (isDragging) {
   isDragging = false;
-}
-
-// Resize functionality
-function startResize(e) {
-  if (!isResizing) {
-    isResizing = true;
-    // 记录调整方向
-    resizeDirection = e.target.dataset.direction || 'se';
-    
-    initialWidth = subtitleModal.offsetWidth;
-    initialHeight = subtitleModal.offsetHeight;
-    initialX = subtitleModal.offsetLeft;
-    initialY = subtitleModal.offsetTop;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    
-    // Prevent text selection during resize
-    e.preventDefault();
+    document.body.style.cursor = 'default';
   }
-}
-
-function resize(e) {
-  if (isResizing) {
-    const dx = e.clientX - dragStartX;
-    const dy = e.clientY - dragStartY;
-    
-    let newWidth = initialWidth;
-    let newHeight = initialHeight;
-    let newLeft = initialX;
-    let newTop = initialY;
-    
-    // 根据调整方向应用相应的变化
-    if (resizeDirection.includes('e')) {
-      newWidth = initialWidth + dx;
-    }
-    if (resizeDirection.includes('s')) {
-      newHeight = initialHeight + dy;
-    }
-    if (resizeDirection.includes('w')) {
-      newWidth = initialWidth - dx;
-      newLeft = initialX + dx;
-    }
-    if (resizeDirection.includes('n')) {
-      newHeight = initialHeight - dy;
-      newTop = initialY + dy;
-    }
-    
-    // 设置最小尺寸
-    const minWidth = 200;
-    const minHeight = 100;
-    
-    if (newWidth >= minWidth) {
-      subtitleModal.style.width = `${newWidth}px`;
-      if (resizeDirection.includes('w')) {
-        subtitleModal.style.left = `${newLeft}px`;
-      }
-    }
-    
-    if (newHeight >= minHeight) {
-      subtitleModal.style.height = `${newHeight}px`;
-      if (resizeDirection.includes('n')) {
-        subtitleModal.style.top = `${newTop}px`;
-      }
-    }
-  }
-}
-
-function stopResize() {
-  isResizing = false;
-  resizeDirection = '';
 }
 
 // Function to start tracking and displaying subtitles
@@ -1362,7 +1402,7 @@ function formatSubtitleText(text) {
   }
 
   if (!text) return '';
-
+  
   // 首先移除HTML标签，如<i></i>, <b></b>等
   let formattedText = text.replace(/<[^>]*>/g, '');
   
@@ -1496,8 +1536,8 @@ async function processTranslationQueue() {
         if (!translation || translation === '[翻译失败]') {
           displayedSubtitles[subtitleIndex].translation = '[翻译失败]';
         } else {
-          // 更新翻译结果
-          displayedSubtitles[subtitleIndex].translation = translation;
+        // 更新翻译结果
+        displayedSubtitles[subtitleIndex].translation = translation;
         }
         
         updateSubtitleDisplay();

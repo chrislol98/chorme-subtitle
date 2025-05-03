@@ -13,8 +13,8 @@ document.addEventListener('DOMContentLoaded', function() {
   // 每3秒检查一次视频状态
   const videoCheckInterval = setInterval(checkVideoStatus, 3000);
   
-  // 从存储中获取翻译设置
-  chrome.storage.local.get(['enableTranslation', 'formatSubtitleStyle'], function(result) {
+  // 从存储中获取设置
+  chrome.storage.local.get(['enableTranslation', 'formatSubtitleStyle', 'subtitleOpacity'], function(result) {
     if (result.hasOwnProperty('enableTranslation')) {
       translationToggle.checked = result.enableTranslation;
     }
@@ -80,33 +80,39 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       // 保存翻译设置和字幕样式设置
-      chrome.storage.local.set({ 
-        enableTranslation: translationToggle.checked,
-        formatSubtitleStyle: subtitleStyleToggle.checked
-      });
-      
-      // 发送解析后的字幕到content script
-      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: 'applySubtitles',
-          subtitles: subtitles,
+      chrome.storage.local.get(['subtitleOpacity'], function(result) {
+        const opacityValue = result.hasOwnProperty('subtitleOpacity') ? result.subtitleOpacity : 0.9;
+        
+        chrome.storage.local.set({ 
           enableTranslation: translationToggle.checked,
-          formatSubtitleStyle: subtitleStyleToggle.checked
-        }, function(response) {
-          loadingIndicator.style.display = 'none';
-          
-          if (response && response.success) {
-            if (response.message === 'Waiting for video to load...') {
-              updateStatus('正在等待视频加载...', 'searching');
-              // 稍后再检查视频状态
-              setTimeout(checkVideoStatus, 1000);
+          formatSubtitleStyle: subtitleStyleToggle.checked,
+          subtitleOpacity: opacityValue
+        });
+        
+        // 发送解析后的字幕到content script
+        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            action: 'applySubtitles',
+            subtitles: subtitles,
+            enableTranslation: translationToggle.checked,
+            formatSubtitleStyle: subtitleStyleToggle.checked,
+            subtitleOpacity: opacityValue
+          }, function(response) {
+            loadingIndicator.style.display = 'none';
+            
+            if (response && response.success) {
+              if (response.message === 'Waiting for video to load...') {
+                updateStatus('正在等待视频加载...', 'searching');
+                // 稍后再检查视频状态
+                setTimeout(checkVideoStatus, 1000);
+              } else {
+                updateStatus('字幕应用成功！', 'ready');
+              }
             } else {
-              updateStatus('字幕应用成功！', 'ready');
+              updateStatus('应用字幕出错：' + (response ? response.error : '页面无响应'), 'error');
             }
-          } else {
-            updateStatus('应用字幕出错：' + (response ? response.error : '页面无响应'), 'error');
-          }
-          applyButton.disabled = false;
+            applyButton.disabled = false;
+          });
         });
       });
     };

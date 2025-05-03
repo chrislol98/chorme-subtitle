@@ -33,25 +33,26 @@
   max-height: 80vh;
   background-color: rgba(0, 0, 0, 0.7);
   border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
   z-index: 10000;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
   resize: both;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  opacity: 0.9; /* 默认透明度90%（即10%透明） */
 }
 
 #srt-modal-header {
-  padding: 8px 12px;
-  background-color: rgba(30, 30, 30, 0.8);
-  color: #ddd;
+  padding: 6px 10px;
+  background-color: rgba(30, 30, 30, 0.3);
+  color: #fff;
   font-family: Arial, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   cursor: move;
   user-select: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   flex-shrink: 0;
   display: flex;
   justify-content: space-between;
@@ -116,16 +117,17 @@ input:checked + .toggle-slider:before {
 
 #srt-subtitle-scroll-container {
   flex-grow: 1;
-  overflow-y: scroll; /* 强制显示滚动条 */
+  overflow-y: scroll;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.5) rgba(0, 0, 0, 0.3);
-  height: calc(100% - 35px); /* 确保容器有高度 */
+  scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.1);
+  height: calc(100% - 35px);
   min-height: 150px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  width: 100%; /* 确保宽度撑满 */
+  border-top: none;
+  width: 100%;
   box-sizing: border-box;
-  padding: 0 5px 0 0; /* 只保留右侧小边距给滚动条 */
+  padding: 0 5px 0 0;
+  background-color: transparent;
 }
 
 /* 主流浏览器的滚动条样式 */
@@ -150,39 +152,40 @@ input:checked + .toggle-slider:before {
 }
 
 #srt-subtitle-content {
-  padding: 5px 0 5px 10px; /* 减少顶部和底部内边距，保留左侧内边距 */
+  padding: 5px 0 5px 10px;
   color: white;
   text-shadow: 
     -1px -1px 0 #000,
     1px -1px 0 #000,
     -1px 1px 0 #000,
     1px 1px 0 #000,
-    0 0 5px rgba(0, 0, 0, 0.5);
+    0 0 5px rgba(0, 0, 0, 0.8);
   font-family: Arial, sans-serif;
   font-size: 16px;
   line-height: 1.4;
   word-wrap: break-word;
-  width: calc(100% - 15px); /* 减少调整量 */
+  width: calc(100% - 15px);
   box-sizing: border-box;
   min-width: calc(100% - 15px);
 }
 
 .subtitle-entry {
   margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
   display: block;
   text-align: left;
-  padding-right: 2px; /* 减少右侧边距 */
+  padding-right: 2px;
+  background-color: transparent;
 }
 
-/* 所有字幕文本默认为白色 */
+/* 所有字幕文本默认为白色，增强阴影 */
 .subtitle-original,
 .subtitle-translation {
-  color: rgba(255, 255, 255, 0.8);
+  color: white;
   width: 100%;
   min-width: 100%;
   white-space: normal;
@@ -192,7 +195,13 @@ input:checked + .toggle-slider:before {
   word-wrap: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
-  padding-right: 0; /* 确保文本右边没有额外内边距 */
+  padding-right: 0;
+  text-shadow: 
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000,
+    0 0 3px rgba(0, 0, 0, 1);
 }
 
 .subtitle-original {
@@ -204,19 +213,24 @@ input:checked + .toggle-slider:before {
   font-size: 15px;
 }
 
-/* 当前播放的字幕高亮为黄色 */
+/* 当前播放的字幕高亮为黄色，增加文字描边 */
 .current-subtitle .subtitle-original,
 .current-subtitle .subtitle-translation {
   color: #ffcc00;
   font-weight: bold;
+  text-shadow: 
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000,
+    0 0 4px rgba(0, 0, 0, 1);
 }
 
 /* 当前播放的字幕加上左边框标记 */
 .current-subtitle {
-  border-left: 3px solid #ffcc00;
-  padding-left: 7px;
-  background-color: rgba(255, 204, 0, 0.1);
-  /* 添加过渡效果 */
+  border-left: 2px solid rgba(255, 204, 0, 0.7);
+  padding-left: 5px;
+  background-color: rgba(0, 0, 0, 0.4);
   transition: all 0.3s ease;
 }
 
@@ -253,4 +267,46 @@ input:checked + .toggle-slider:before {
 /* 初始显示模态框，不再隐藏 */
 #srt-subtitle-modal {
   display: flex;
+}
+
+/* 透明度调节滑块样式 */
+.opacity-slider-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+}
+
+.opacity-slider {
+  -webkit-appearance: none;
+  width: 60px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  outline: none;
+}
+
+.opacity-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #2196F3;
+  cursor: pointer;
+}
+
+.opacity-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #2196F3;
+  cursor: pointer;
+  border: none;
+}
+
+.opacity-value {
+  font-size: 11px;
+  min-width: 24px;
+  text-align: center;
 } 
