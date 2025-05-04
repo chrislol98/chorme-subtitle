@@ -27,6 +27,7 @@ let iframeVideos = []; // 存储从iframe获取的视频信息
 let mainPageId = null; // 主页面的唯一标识
 let pageId = Math.random().toString(36).substring(2, 15); // 当前页面的唯一标识
 let subtitleOpacity = 0.9; // 默认透明度90%（即10%透明）
+let subtitleDelay = 0; // 字幕延迟(毫秒)
 
 // 检测当前脚本是否在iframe中运行
 try {
@@ -222,40 +223,25 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
         subtitleOpacity = request.subtitleOpacity;
       }
       
-      // Find video element on the page
-      videoElement = findVideoElement();
-      
-      if (!videoElement) {
-        // 如果没有立即找到视频元素，设置一个延迟等待
-        // MutationObserver会在视频出现时处理字幕显示
-        console.log('视频元素未找到，正在等待视频加载...');
+      // 从存储中加载字幕延迟设置
+      chrome.storage.local.get(['subtitleDelay'], function(result) {
+        if (result.hasOwnProperty('subtitleDelay')) {
+          subtitleDelay = result.subtitleDelay;
+        } else {
+          subtitleDelay = 0; // 默认无延迟
+        }
         
-        // 设置一个有限的等待时间
-        const videoDetectionTimeout = setTimeout(() => {
-          if (!videoElement) {
-            sendResponse({success: false, error: 'No video element found on this page after waiting.'});
-          }
-        }, 15000); // 15秒等待时间
-        
-        // 返回一个初步的成功响应，表示正在等待视频加载
-        sendResponse({success: true, message: 'Waiting for video to load...'});
-        return true;
-      }
+        // 继续初始化字幕显示...
+        continueSubtitleInitialization(sendResponse);
+      });
       
-      // Create or reset subtitle display element
-      setupSubtitleModal();
-      
-      // 立即加载并显示所有字幕
-      loadAllSubtitles();
-      
-      // Start checking for subtitle updates
-      startSubtitleTracking();
-      
-      sendResponse({success: true});
+      // 返回true以保持sendResponse的有效性
+      return true;
     } catch (error) {
+      console.error('应用字幕时出错:', error);
       sendResponse({success: false, error: error.message});
+      return true;
     }
-    return true;
   } else if (request.action === 'toggleTranslation') {
     // 切换翻译状态
     enableTranslation = request.enable;
@@ -265,11 +251,28 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     sendResponse({success: true});
     return true;
   } else if (request.action === 'toggleSubtitleStyle') {
-    // 切换字幕样式
+    // 切换字幕格式化样式
     formatSubtitleStyle = request.formatStyle;
-    // 清空现有字幕并重新加载，应用新设置
-    displayedSubtitles = [];
-    loadAllSubtitles();
+    chrome.storage.local.set({ formatSubtitleStyle: formatSubtitleStyle });
+    loadAllSubtitles(); // 重新加载所有字幕以应用新样式
+    sendResponse({success: true});
+    return true;
+  } else if (request.action === 'updateSubtitleDelay') {
+    // 更新字幕延迟
+    subtitleDelay = request.delay;
+    
+    // 更新延迟显示
+    const delayValue = document.getElementById('delay-value');
+    if (delayValue) {
+      delayValue.textContent = `${subtitleDelay}ms`;
+    }
+    
+    // 保存延迟值到存储
+    chrome.storage.local.set({ subtitleDelay: subtitleDelay });
+    
+    // 根据新的延迟刷新字幕显示
+    updateSubtitle();
+    
     sendResponse({success: true});
     return true;
   } else if (request.action === 'checkVideoStatus') {
@@ -300,6 +303,40 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     return true;
   }
 });
+
+// 辅助函数，继续初始化字幕显示
+function continueSubtitleInitialization(sendResponse) {
+  // Find video element on the page
+  videoElement = findVideoElement();
+  
+  if (!videoElement) {
+    // 如果没有立即找到视频元素，设置一个延迟等待
+    // MutationObserver会在视频出现时处理字幕显示
+    console.log('视频元素未找到，正在等待视频加载...');
+    
+    // 设置一个有限的等待时间
+    const videoDetectionTimeout = setTimeout(() => {
+      if (!videoElement) {
+        sendResponse({success: false, error: 'No video element found on this page after waiting.'});
+      }
+    }, 15000); // 15秒等待时间
+    
+    // 返回一个初步的成功响应，表示正在等待视频加载
+    sendResponse({success: true, message: 'Waiting for video to load...'});
+    return;
+  }
+  
+  // Create or reset subtitle display element
+  setupSubtitleModal();
+  
+  // 立即加载并显示所有字幕
+  loadAllSubtitles();
+  
+  // 启动定期检查
+  startSubtitleTracking();
+  
+  sendResponse({success: true});
+}
 
 // Function to find the main video element on the page
 function findVideoElement() {
@@ -694,6 +731,86 @@ function setupSubtitleModal() {
     <span class="opacity-value" id="opacity-value">${Math.round(subtitleOpacity * 100)}%</span>
   `;
   
+  // 字幕延迟调节控件
+  const delayControl = document.createElement('div');
+  delayControl.className = 'delay-control-container';
+  delayControl.style.display = 'flex';
+  delayControl.style.alignItems = 'center';
+  delayControl.style.gap = '4px';
+  delayControl.style.marginLeft = '8px';
+  
+  // 创建延迟值显示元素
+  const delayValue = document.createElement('span');
+  delayValue.id = 'delay-value';
+  delayValue.textContent = `${subtitleDelay}ms`;
+  delayValue.style.fontSize = '11px';
+  delayValue.style.minWidth = '40px';
+  delayValue.style.textAlign = 'center';
+  
+  // 创建减少延迟按钮
+  const decreaseButton = document.createElement('button');
+  decreaseButton.textContent = '-';
+  decreaseButton.style.width = '20px';
+  decreaseButton.style.height = '20px';
+  decreaseButton.style.padding = '0';
+  decreaseButton.style.border = '1px solid #aaa';
+  decreaseButton.style.borderRadius = '3px';
+  decreaseButton.style.background = 'rgba(0,0,0,0.3)';
+  decreaseButton.style.color = 'white';
+  decreaseButton.style.fontSize = '14px';
+  decreaseButton.style.cursor = 'pointer';
+  decreaseButton.style.display = 'flex';
+  decreaseButton.style.justifyContent = 'center';
+  decreaseButton.style.alignItems = 'center';
+  decreaseButton.title = '减小延迟';
+  
+  // 创建增加延迟按钮
+  const increaseButton = document.createElement('button');
+  increaseButton.textContent = '+';
+  increaseButton.style.width = '20px';
+  increaseButton.style.height = '20px';
+  increaseButton.style.padding = '0';
+  increaseButton.style.border = '1px solid #aaa';
+  increaseButton.style.borderRadius = '3px';
+  increaseButton.style.background = 'rgba(0,0,0,0.3)';
+  increaseButton.style.color = 'white';
+  increaseButton.style.fontSize = '14px';
+  increaseButton.style.cursor = 'pointer';
+  increaseButton.style.display = 'flex';
+  increaseButton.style.justifyContent = 'center';
+  increaseButton.style.alignItems = 'center';
+  increaseButton.title = '增加延迟';
+  
+  // 小标签显示功能
+  const delayLabel = document.createElement('span');
+  delayLabel.textContent = '延迟:';
+  delayLabel.style.fontSize = '11px';
+  
+  // 添加到延迟控制容器
+  delayControl.appendChild(delayLabel);
+  delayControl.appendChild(decreaseButton);
+  delayControl.appendChild(delayValue);
+  delayControl.appendChild(increaseButton);
+  
+  // 添加事件监听器来调整字幕延迟
+  decreaseButton.addEventListener('click', () => {
+    subtitleDelay -= 250; // 减少250毫秒
+    delayValue.textContent = `${subtitleDelay}ms`;
+    // 保存延迟值
+    chrome.storage.local.set({ subtitleDelay: subtitleDelay });
+    // 更新字幕显示以反映新的延迟
+    updateSubtitle();
+  });
+  
+  increaseButton.addEventListener('click', () => {
+    subtitleDelay += 250; // 增加250毫秒
+    delayValue.textContent = `${subtitleDelay}ms`;
+    // 保存延迟值
+    chrome.storage.local.set({ subtitleDelay: subtitleDelay });
+    // 更新字幕显示以反映新的延迟
+    updateSubtitle();
+  });
+  
   // 关闭按钮
   const closeButton = document.createElement('div');
   closeButton.style.marginLeft = 'auto';
@@ -717,6 +834,7 @@ function setupSubtitleModal() {
   controlsContainer.appendChild(translationToggle);
   controlsContainer.appendChild(styleToggle);
   controlsContainer.appendChild(opacitySlider);
+  controlsContainer.appendChild(delayControl);
   controlsContainer.appendChild(closeButton);
   
   // 添加控件容器到模态框
@@ -884,6 +1002,46 @@ function setupSubtitleModal() {
       }
     }
   });
+
+  // 添加键盘快捷键监听器，用于调整字幕延迟
+  document.addEventListener('keydown', function(event) {
+    // 仅当字幕模态框显示时处理快捷键
+    if (!subtitleModal || subtitleModal.style.display === 'none') {
+      return;
+    }
+    
+    // 避免在输入框中触发快捷键
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+      return;
+    }
+    
+    // 调整字幕延迟的快捷键
+    if (event.key === '[' || event.key === '{') {
+      // 减少延迟（提前字幕）
+      subtitleDelay -= 250;
+      updateDelayDisplay();
+      event.preventDefault();
+    } else if (event.key === ']' || event.key === '}') {
+      // 增加延迟（延后字幕）
+      subtitleDelay += 250;
+      updateDelayDisplay();
+      event.preventDefault();
+    }
+  });
+  
+  // 添加延迟显示更新函数
+  function updateDelayDisplay() {
+    const delayValue = document.getElementById('delay-value');
+    if (delayValue) {
+      delayValue.textContent = `${subtitleDelay}ms`;
+    }
+    
+    // 保存延迟值
+    chrome.storage.local.set({ subtitleDelay: subtitleDelay });
+    
+    // 更新字幕显示以反映新的延迟
+    updateSubtitle();
+  }
 }
 
 // 新增函数：预加载并显示所有字幕
@@ -1075,8 +1233,11 @@ function updateSubtitle() {
 
 // Function to find the subtitle for the current time
 function findSubtitleForTime(currentTime) {
+  // 应用字幕延迟，从当前时间减去延迟值
+  const adjustedTime = currentTime - subtitleDelay;
+  
   return subtitles.find(subtitle => 
-    currentTime >= subtitle.startTime && currentTime <= subtitle.endTime
+    adjustedTime >= subtitle.startTime && adjustedTime <= subtitle.endTime
   );
 }
 
