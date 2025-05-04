@@ -1,6 +1,6 @@
 ---
 description: 
 globs: 
-alwaysApply: false
+alwaysApply: true
 ---
 - 只实现我给你提出的问题，千万别实现多余的功能/优化
